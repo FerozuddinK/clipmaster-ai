@@ -1,0 +1,9 @@
+{
+  "name": "ClipMaster AI",
+  "short_name": "ClipMaster",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0c0d14",
+  "theme_color": "#10111a",
+  "description": "A personal video clipping studio"
+}
