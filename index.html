@@ -70,24 +70,132 @@ $('setEnd').onclick=()=>{end.value=video.currentTime.toFixed(1)};
 function rangeOK(){const a=Number(start.value),b=Number(end.value);if(!Number.isFinite(a)||!Number.isFinite(b)||a<0||b<=a||b>video.duration){say('Please enter valid times. End must be after start and within the video.');return false}return true}
 $('previewClip').onclick=async()=>{if(!rangeOK())return;video.pause();video.currentTime=Number(start.value);await video.play();stopAt=Number(end.value);const check=()=>{if(video.currentTime>=stopAt){video.pause();cancelAnimationFrame(raf);say('Clip preview finished. Adjust the times or export.')}else raf=requestAnimationFrame(check)};raf=requestAnimationFrame(check);$('stopPreview').disabled=false};
 $('stopPreview').onclick=()=>{video.pause();cancelAnimationFrame(raf);say('Preview stopped.')};
+
 $('export').onclick=async()=>{
  if(!rangeOK())return;
- const capture=video.captureStream?video.captureStream():video.mozCaptureStream?video.mozCaptureStream():null;
- if(!capture){say('This browser does not support in-browser clip export. Try the latest Chrome on Android.');return}
- const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(t=>MediaRecorder.isTypeSupported(t));
- if(!mime){say('WebM export is not supported by this browser. Try the latest Chrome.');return}
- chunks=[];recorder=new MediaRecorder(capture,{mimeType:mime});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
- recorder.onstop=()=>{
-  const blob=new Blob(chunks,{type:mime});if(recordedURL)URL.revokeObjectURL(recordedURL);recordedURL=URL.createObjectURL(blob);
-  $('download').href=recordedURL;$('downloadArea').classList.remove('hidden');say(`Export complete · ${(blob.size/1024/1024).toFixed(2)} MB. Tap Download your clip.`);
+
+ if(!video.captureStream){
+  say('Your browser does not support audio capture. Please use the latest Chrome.');
+  return;
+ }
+
+ const canvas=document.createElement('canvas');
+ canvas.width=720;
+ canvas.height=1280;
+
+ const ctx=canvas.getContext('2d');
+ const canvasStream=canvas.captureStream(30);
+ const sourceStream=video.captureStream();
+ const audioTracks=sourceStream.getAudioTracks();
+
+ const stream=new MediaStream([
+  ...canvasStream.getVideoTracks(),
+  ...audioTracks
+ ]);
+
+ const mime=[
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm'
+ ].find(t=>MediaRecorder.isTypeSupported(t));
+
+ if(!mime){
+  say('WebM recording is not supported in this browser.');
+  return;
+ }
+
+ const a=Number(start.value);
+ const b=Number(end.value);
+
+ chunks=[];
+
+ if(recordedURL)URL.revokeObjectURL(recordedURL);
+
+ recorder=new MediaRecorder(stream,{mimeType:mime});
+
+ let animation;
+
+ function drawFrame(){
+  const vw=video.videoWidth;
+  const vh=video.videoHeight;
+
+  if(vw && vh){
+   const scale=Math.max(720/vw,1280/vh);
+   const sw=720/scale;
+   const sh=1280/scale;
+   const sx=(vw-sw)/2;
+   const sy=(vh-sh)/2;
+
+   ctx.fillStyle='#000';
+   ctx.fillRect(0,0,720,1280);
+
+   ctx.drawImage(
+    video,sx,sy,sw,sh,
+    0,0,720,1280
+   );
+  }
+
+  if(recorder.state==='recording'){
+   animation=requestAnimationFrame(drawFrame);
+  }
+ }
+
+ recorder.ondataavailable=e=>{
+  if(e.data.size)chunks.push(e.data);
  };
- video.pause();video.currentTime=Number(start.value);
- await new Promise(resolve=>video.addEventListener('seeked',resolve,{once:true}));
- recorder.start(250);await video.play();say('Exporting your clip… Keep this page open until export finishes.');
- const finish=()=>{if(recorder&&recorder.state!=='inactive')recorder.stop();video.pause();};
- const watcher=()=>{if(video.currentTime>=Number(end.value)){finish()}else if(recorder&&recorder.state!=='inactive'){requestAnimationFrame(watcher)}};
- requestAnimationFrame(watcher);
+
+ recorder.onstop=()=>{
+  cancelAnimationFrame(animation);
+  stream.getTracks().forEach(t=>t.stop());
+  sourceStream.getTracks().forEach(t=>t.stop());
+
+  const blob=new Blob(chunks,{type:mime});
+  recordedURL=URL.createObjectURL(blob);
+
+  $('download').href=recordedURL;
+  $('download').download='clipmaster-vertical.webm';
+  $('downloadArea').classList.remove('hidden');
+
+  say(
+   'Vertical export complete! 720 × 1280 (9:16). '+
+   'File size: '+(blob.size/1024/1024).toFixed(2)+' MB. '+
+   'Tap Download your clip.'
+  );
+ };
+
+ video.pause();
+ video.currentTime=a;
+
+ await new Promise(resolve=>{
+  video.addEventListener('seeked',resolve,{once:true});
+ });
+
+ drawFrame();
+ recorder.start(250);
+
+ try{
+  await video.play();
+  say('Creating your vertical 9:16 video. Please keep this page open.');
+
+  const check=()=>{
+   if(video.currentTime>=b){
+    if(recorder.state==='recording'){
+     video.pause();
+     recorder.stop();
+    }
+   }else if(recorder.state==='recording'){
+    requestAnimationFrame(check);
+   }
+  };
+
+  requestAnimationFrame(check);
+
+ }catch(error){
+  recorder.stop();
+  say('Could not start video playback. Please try again.');
+ }
 };
+
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}))}
 </script>
 </body></html>
